@@ -4,16 +4,20 @@ from pydantic import BaseModel
 from typing import List, Dict, Any
 
 
+# ============================================================
+# AGENTX APPLICATION
+# ============================================================
+
 app = FastAPI(
     title="AGENTX API",
     description="AI Execution OS backend",
-    version="0.2.0"
+    version="0.3.0"
 )
 
 
-# --------------------------------------------------
+# ============================================================
 # CORS
-# --------------------------------------------------
+# ============================================================
 
 app.add_middleware(
     CORSMiddleware,
@@ -24,57 +28,47 @@ app.add_middleware(
 )
 
 
-# --------------------------------------------------
-# Request Model
-# --------------------------------------------------
+# ============================================================
+# REQUEST MODEL
+# ============================================================
 
 class TaskRequest(BaseModel):
     task: str
 
 
-# --------------------------------------------------
-# ROOT
-# --------------------------------------------------
+# ============================================================
+# AGENTX PIPELINE
+# ============================================================
 
-@app.get("/")
-def root():
-    return {
-        "name": "AGENTX",
-        "message": "AGENTX backend is running",
-        "status": "online"
-    }
+PIPELINE = [
+    "UNDERSTAND",
+    "PLAN",
+    "EXECUTE",
+    "VERIFY",
+    "DELIVER"
+]
 
-
-# --------------------------------------------------
-# HEALTH
-# --------------------------------------------------
-
-@app.get("/health")
-def health():
-    return {
-        "status": "healthy",
-        "service": "agentx-api"
-    }
-
-
-# --------------------------------------------------
-# UNDERSTAND
-# --------------------------------------------------
 
 def understand_task(task: str) -> Dict[str, Any]:
+    """
+    Understand the user's objective.
+    """
+
+    cleaned_task = task.strip()
+
     return {
         "status": "completed",
-        "objective": task,
-        "summary": f"AGENTX identified the objective: {task}",
-        "task_type": "general"
+        "objective": cleaned_task,
+        "task_type": "general",
+        "summary": f"AGENTX identified the objective: {cleaned_task}"
     }
 
 
-# --------------------------------------------------
-# PLAN
-# --------------------------------------------------
+def plan_task(task: str) -> List[str]:
+    """
+    Create a basic execution plan.
+    """
 
-def create_plan(task: str) -> List[str]:
     return [
         f"Understand the objective: {task}",
         "Identify the information and resources required",
@@ -84,50 +78,58 @@ def create_plan(task: str) -> List[str]:
     ]
 
 
-# --------------------------------------------------
-# EXECUTE
-# --------------------------------------------------
+def execute_task(task: str) -> Dict[str, Any]:
+    """
+    Execute the task.
 
-def execute_plan(task: str, plan: List[str]) -> Dict[str, Any]:
+    NOTE:
+    This is currently the execution-engine foundation.
+    Real external tools such as web search, file processing,
+    code execution, etc. will be connected here later.
+    """
+
     return {
         "status": "completed",
-        "message": "Execution layer completed the planned steps",
-        "task": task,
-        "steps_completed": len(plan)
+        "message": "Execution layer completed the current task simulation.",
+        "task": task
     }
 
 
-# --------------------------------------------------
-# VERIFY
-# --------------------------------------------------
+def verify_result(execution_result: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Verify the execution result.
+    """
 
-def verify_result(execution: Dict[str, Any]) -> Dict[str, Any]:
+    if execution_result.get("status") == "completed":
+        return {
+            "status": "verified",
+            "passed": True,
+            "message": "Execution result passed the current verification check."
+        }
+
     return {
-        "status": "verified",
-        "checks": [
-            "Task received",
-            "Plan created",
-            "Execution completed",
-            "Result structure validated"
-        ]
+        "status": "failed",
+        "passed": False,
+        "message": "Execution result failed verification."
     }
 
 
-# --------------------------------------------------
-# DELIVER
-# --------------------------------------------------
-
-def create_delivery(
+def deliver_result(
     task: str,
     understanding: Dict[str, Any],
     plan: List[str],
     execution: Dict[str, Any],
     verification: Dict[str, Any]
 ) -> Dict[str, Any]:
+    """
+    Prepare the final AGENTX response.
+    """
 
     return {
         "title": "AGENTX Task Result",
         "task": task,
+        "status": "completed",
+        "summary": f"AGENTX processed the task: {task}",
         "understanding": understanding,
         "plan": plan,
         "execution": execution,
@@ -135,9 +137,35 @@ def create_delivery(
     }
 
 
-# --------------------------------------------------
-# MAIN AGENTX PIPELINE
-# --------------------------------------------------
+# ============================================================
+# ROOT ENDPOINT
+# ============================================================
+
+@app.get("/")
+def root():
+    return {
+        "name": "AGENTX",
+        "message": "AGENTX backend is running",
+        "status": "online",
+        "version": "0.3.0"
+    }
+
+
+# ============================================================
+# HEALTH ENDPOINT
+# ============================================================
+
+@app.get("/health")
+def health():
+    return {
+        "status": "healthy",
+        "service": "agentx-api"
+    }
+
+
+# ============================================================
+# TASK EXECUTION ENDPOINT
+# ============================================================
 
 @app.post("/api/tasks")
 def create_task(request: TaskRequest):
@@ -147,23 +175,38 @@ def create_task(request: TaskRequest):
     if not task:
         return {
             "success": False,
-            "message": "Task cannot be empty"
+            "message": "Task cannot be empty."
         }
 
+    # --------------------------------------------------------
     # 1. UNDERSTAND
+    # --------------------------------------------------------
+
     understanding = understand_task(task)
 
+    # --------------------------------------------------------
     # 2. PLAN
-    plan = create_plan(task)
+    # --------------------------------------------------------
 
+    plan = plan_task(task)
+
+    # --------------------------------------------------------
     # 3. EXECUTE
-    execution = execute_plan(task, plan)
+    # --------------------------------------------------------
 
+    execution = execute_task(task)
+
+    # --------------------------------------------------------
     # 4. VERIFY
+    # --------------------------------------------------------
+
     verification = verify_result(execution)
 
+    # --------------------------------------------------------
     # 5. DELIVER
-    delivery = create_delivery(
+    # --------------------------------------------------------
+
+    result = deliver_result(
         task,
         understanding,
         plan,
@@ -174,12 +217,6 @@ def create_task(request: TaskRequest):
     return {
         "success": True,
         "agent": "AGENTX",
-        "pipeline": [
-            "UNDERSTAND",
-            "PLAN",
-            "EXECUTE",
-            "VERIFY",
-            "DELIVER"
-        ],
-        "result": delivery
+        "pipeline": PIPELINE,
+        "result": result
     }
