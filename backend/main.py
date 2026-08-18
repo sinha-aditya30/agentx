@@ -20,7 +20,7 @@ import re
 app = FastAPI(
     title="AGENTX API",
     description="AI Execution OS backend",
-    version="0.6.0"
+    version="0.8.1"
 )
 
 
@@ -164,21 +164,44 @@ def understand_task(task: str) -> Dict[str, Any]:
     task_lower = cleaned_task.lower()
 
     # --------------------------------------------------------
-    # Research detection
+    # Analysis detection
     # --------------------------------------------------------
+    # Explicit analytical intent must be checked before build/research
+    # keywords. For example:
+    # "Analyze a software project" contains both "analyze" and
+    # "software", but the requested operation is analysis, not building.
 
     if any(
         word in task_lower
         for word in [
+            "analyze",
+            "analyse",
+            "analysis",
+            "data analysis",
+            "report",
+            "insights",
+            "evaluate",
+            "assess",
+            "audit",
+            "review",
+        ]
+    ):
+        task_type = "analysis"
+
+    # --------------------------------------------------------
+    # Research detection
+    # --------------------------------------------------------
+
+    elif any(
+        word in task_lower
+        for word in [
             "research",
-            "market",
             "latest",
             "news",
             "competitors",
-            "companies",
             "industry",
+            "market research",
             "compare",
-            "analysis",
             "trends",
             "forecast",
             "statistics",
@@ -230,30 +253,22 @@ def understand_task(task: str) -> Dict[str, Any]:
     ):
         task_type = "calculation"
 
-    # --------------------------------------------------------
-    # Analysis detection
-    # --------------------------------------------------------
-
-    elif any(
-        word in task_lower
-        for word in [
-            "analyze",
-            "analyse",
-            "data",
-            "report",
-            "insights",
-            "evaluate",
-        ]
-    ):
-        task_type = "analysis"
-
     else:
         task_type = "general"
+
+    intent_map = {
+        "research": "Find and synthesize external information",
+        "build": "Plan and structure a software solution",
+        "calculation": "Compute a numerical result safely",
+        "analysis": "Analyze information and produce actionable insights",
+        "general": "Understand and structure the requested task",
+    }
 
     return {
         "status": "completed",
         "objective": cleaned_task,
         "task_type": task_type,
+        "intent": intent_map.get(task_type, intent_map["general"]),
         "summary": (
             f"AGENTX identified the objective: {cleaned_task}"
         )
@@ -1159,10 +1174,215 @@ def select_tool(task_type: str) -> str:
 
 
 # ============================================================
+# BUILD PLANNER
+# ============================================================
+
+def create_build_plan(task: str) -> Dict[str, Any]:
+    """
+    Create a concrete software-development plan from the user's task.
+
+    This deterministic layer gives AGENTX a useful build result without
+    pretending that files were modified or code was deployed.
+    """
+
+    task_lower = task.lower()
+
+    components = []
+    stack = []
+
+    if any(word in task_lower for word in ["website", "frontend", "ui", "dashboard"]):
+        components.extend([
+            "Responsive frontend interface",
+            "Reusable UI components",
+            "Client-side validation and interaction",
+        ])
+        stack.extend(["Next.js/React", "TypeScript", "CSS"])
+
+    if any(word in task_lower for word in ["api", "backend", "server", "service"]):
+        components.extend([
+            "Backend API layer",
+            "Request validation",
+            "Error handling",
+        ])
+        stack.extend(["FastAPI or Node.js", "REST API"])
+
+    if any(word in task_lower for word in ["database", "db", "mysql", "postgres", "storage"]):
+        components.extend([
+            "Persistent data model",
+            "Database access layer",
+            "Data validation",
+        ])
+        stack.extend(["PostgreSQL/MySQL", "ORM or SQL layer"])
+
+    if any(word in task_lower for word in ["ai", "ml", "machine learning", "model", "prediction"]):
+        components.extend([
+            "AI/ML inference layer",
+            "Input preprocessing",
+            "Model-result validation",
+        ])
+        stack.extend(["Python", "scikit-learn/TensorFlow/PyTorch"])
+
+    if any(word in task_lower for word in ["authentication", "login", "signup", "user"]):
+        components.append("Authentication and authorization")
+        stack.append("JWT/session-based authentication")
+
+    if not components:
+        components = [
+            "User-facing input/interface",
+            "Core application logic",
+            "Validation and error handling",
+            "Structured output",
+        ]
+
+    if not stack:
+        stack = [
+            "Choose the frontend/backend stack according to requirements",
+            "Use REST/JSON interfaces where services are separated",
+        ]
+
+    components = list(dict.fromkeys(components))
+    stack = list(dict.fromkeys(stack))
+
+    phases = [
+        "Define requirements and success criteria",
+        "Design the solution architecture",
+        "Implement the core functionality",
+        "Test the implementation",
+        "Prepare deployment and documentation",
+    ]
+
+    return {
+        "status": "completed",
+        "tool": "build_planner",
+        "task": task,
+        "objective": f"Plan implementation for: {task}",
+        "components": components,
+        "suggested_stack": stack,
+        "phases": phases,
+        "deliverables": [
+            "Architecture outline",
+            "Implementation checklist",
+            "Testing checklist",
+            "Deployment checklist",
+        ],
+        "message": (
+            "AGENTX generated a structured development plan. "
+            "Actual file modification and deployment require "
+            "an explicitly connected execution tool."
+        ),
+    }
+
+
+# ============================================================
+# ANALYSIS ENGINE
+# ============================================================
+
+def analyze_task(task: str) -> Dict[str, Any]:
+    """
+    Produce a structured analysis framework without inventing data.
+    """
+
+    task_lower = task.lower()
+
+    focus = []
+
+    if any(word in task_lower for word in ["business", "market", "company", "startup"]):
+        focus.extend([
+            "Market opportunity",
+            "Customer/user segments",
+            "Competitive position",
+            "Business risks",
+        ])
+
+    if any(word in task_lower for word in ["data", "dataset", "statistics", "metrics"]):
+        focus.extend([
+            "Data quality",
+            "Distribution and trends",
+            "Outliers/anomalies",
+            "Key metrics",
+        ])
+
+    if any(word in task_lower for word in ["project", "system", "software", "technical"]):
+        focus.extend([
+            "Architecture",
+            "Functional requirements",
+            "Reliability and scalability",
+            "Security and maintainability",
+        ])
+
+    if not focus:
+        focus = [
+            "Problem definition",
+            "Relevant evidence",
+            "Patterns and relationships",
+            "Risks",
+        ]
+
+    focus = list(dict.fromkeys(focus))
+
+    return {
+        "status": "completed",
+        "tool": "analysis_engine",
+        "task": task,
+        "objective": f"Analyze: {task}",
+        "dimensions": [
+            "Objective and scope",
+            "Inputs/evidence required",
+            "Key patterns or drivers",
+            "Risks and limitations",
+            "Actionable recommendations",
+        ],
+        "focus_areas": focus,
+        "evidence_status": "No external dataset was supplied to this request.",
+        "limitations": [
+            "No numerical conclusions are fabricated without supporting data.",
+            "Actual dataset analysis can be performed when a file/data tool is connected.",
+        ],
+        "recommended_next_steps": [
+            "Provide the relevant dataset, document, or structured evidence",
+            "Validate the data and define the target metrics",
+            "Run the selected analysis methods",
+            "Verify the resulting insights before delivery",
+        ],
+        "message": (
+            "AGENTX created a structured analysis report without "
+            "inventing unsupported findings."
+        ),
+    }
+
+
+# ============================================================
+# GENERAL TASK REASONER
+# ============================================================
+
+def reason_general_task(task: str) -> Dict[str, Any]:
+    """Structure a general request into actionable next steps."""
+
+    return {
+        "status": "completed",
+        "tool": "general_reasoner",
+        "task": task,
+        "objective": task,
+        "actions": [
+            "Clarify the requested outcome",
+            "Identify the information or resources required",
+            "Execute the appropriate task-specific operation",
+            "Verify the result",
+            "Deliver the final outcome",
+        ],
+        "message": (
+            "AGENTX structured the request and prepared an "
+            "action-oriented execution path."
+        ),
+    }
+
+
+# ============================================================
 # GENERAL EXECUTION
 # ============================================================
 
 def execute_task(
+
     task: str,
     task_type: str
 ) -> Dict[str, Any]:
@@ -1205,48 +1425,20 @@ def execute_task(
     # --------------------------------------------------------
 
     if task_type == "build":
-
-        return {
-            "status": "completed",
-            "tool": selected_tool,
-            "message": (
-                "AGENTX created a development execution plan. "
-                "Actual code execution and deployment tools "
-                "will be connected in a later tool layer."
-            ),
-            "task": task,
-        }
+        return create_build_plan(task)
 
     # --------------------------------------------------------
     # Analysis engine
     # --------------------------------------------------------
 
     if task_type == "analysis":
-
-        return {
-            "status": "completed",
-            "tool": selected_tool,
-            "message": (
-                "AGENTX prepared the task for analysis. "
-                "A file/data analysis tool will be connected "
-                "to this execution route next."
-            ),
-            "task": task,
-        }
+        return analyze_task(task)
 
     # --------------------------------------------------------
-    # General reasoner foundation
+    # General reasoner
     # --------------------------------------------------------
 
-    return {
-        "status": "completed",
-        "tool": selected_tool,
-        "message": (
-            "AGENTX completed the current general-task "
-            "execution foundation."
-        ),
-        "task": task,
-    }
+    return reason_general_task(task)
 
 
 # ============================================================
@@ -1256,83 +1448,112 @@ def execute_task(
 def verify_result(
     execution_result: Dict[str, Any]
 ) -> Dict[str, Any]:
-    """
-    Verify the execution result.
-    """
-
-    # --------------------------------------------------------
-    # General execution failure
-    # --------------------------------------------------------
+    """Verify the execution result using task-specific checks."""
 
     if execution_result.get("status") != "completed":
-
         return {
             "status": "failed",
             "passed": False,
-            "message": (
-                "Execution result failed verification."
-            )
+            "message": "Execution result failed verification.",
         }
 
-    # --------------------------------------------------------
-    # Research-specific verification
-    # --------------------------------------------------------
-
+    # Research verification
     if "sources" in execution_result:
-
-        source_count = execution_result.get(
-            "source_count",
-            0
-        )
-
-        findings = execution_result.get(
-            "findings",
-            []
-        )
-
+        source_count = execution_result.get("source_count", 0)
+        findings = execution_result.get("findings", [])
         finding_count = len(findings)
 
-        # ----------------------------------------------------
-        # Successful research
-        # ----------------------------------------------------
-
         if source_count > 0 and finding_count > 0:
+            unique_urls = {
+                item.get("url")
+                for item in execution_result.get("sources", [])
+                if item.get("url")
+            }
 
             return {
                 "status": "verified",
                 "passed": True,
                 "message": (
-                    f"Verification passed. "
-                    f"AGENTX collected {source_count} "
-                    f"web source(s) and generated "
-                    f"{finding_count} research finding(s)."
-                )
+                    f"Verification passed. AGENTX collected "
+                    f"{source_count} web source(s), generated "
+                    f"{finding_count} finding(s), and retained "
+                    f"{len(unique_urls)} unique source URL(s)."
+                ),
             }
-
-        # ----------------------------------------------------
-        # Sources but no findings
-        # ----------------------------------------------------
 
         return {
             "status": "failed",
             "passed": False,
             "message": (
-                "Verification failed because useful "
-                "research findings were not generated."
-            )
+                "Verification failed because useful research "
+                "findings were not generated."
+            ),
         }
 
-    # --------------------------------------------------------
-    # Non-research verification
-    # --------------------------------------------------------
+    # Calculator verification
+    if execution_result.get("tool") == "calculator":
+        answer = execution_result.get("answer")
 
+        if isinstance(answer, (int, float)):
+            return {
+                "status": "verified",
+                "passed": True,
+                "message": (
+                    "Verification passed. The calculator produced "
+                    "a valid numeric result."
+                ),
+            }
+
+        return {
+            "status": "failed",
+            "passed": False,
+            "message": (
+                "Calculation verification failed: no valid numeric "
+                "answer was produced."
+            ),
+        }
+
+    # Build verification
+    if execution_result.get("tool") == "build_planner":
+        components = execution_result.get("components", [])
+        phases = execution_result.get("phases", [])
+        passed = bool(components and phases)
+
+        return {
+            "status": "verified" if passed else "failed",
+            "passed": passed,
+            "message": (
+                "Verification passed. The development plan contains "
+                "components and implementation phases."
+                if passed
+                else "Verification failed because the build plan is incomplete."
+            ),
+        }
+
+    # Analysis verification
+    if execution_result.get("tool") == "analysis_engine":
+        focus_areas = execution_result.get("focus_areas", [])
+        next_steps = execution_result.get("recommended_next_steps", [])
+        passed = bool(focus_areas and next_steps)
+
+        return {
+            "status": "verified" if passed else "failed",
+            "passed": passed,
+            "message": (
+                "Verification passed. The analysis contains focus areas "
+                "and evidence-driven next steps."
+                if passed
+                else "Verification failed because the analysis structure is incomplete."
+            ),
+        }
+
+    # General verification
     return {
         "status": "verified",
         "passed": True,
         "message": (
-            "Execution result passed the "
-            "current verification check."
-        )
+            "Execution result passed the current verification check."
+        ),
     }
 
 
@@ -1371,6 +1592,11 @@ def deliver_result(
 
         "execution": execution,
 
+        "execution_status": execution.get(
+            "status",
+            "unknown"
+        ),
+
         "tool": execution.get(
             "tool",
             select_tool(
@@ -1393,7 +1619,7 @@ def root():
         "name": "AGENTX",
         "message": "AGENTX backend is running",
         "status": "online",
-        "version": "0.6.0"
+        "version": "0.8.1"
     }
 
 
@@ -1407,7 +1633,7 @@ def health():
     return {
         "status": "healthy",
         "service": "agentx-api",
-        "version": "0.6.0"
+        "version": "0.8.1"
     }
 
 
@@ -1544,7 +1770,7 @@ def create_task(
     task_record = add_task_record(
         task,
         {
-            "success": True,
+            "success": bool(verification.get("passed")),
             "agent": "AGENTX",
             "pipeline": PIPELINE,
             "result": result,
@@ -1552,7 +1778,7 @@ def create_task(
     )
 
     return {
-        "success": True,
+        "success": bool(verification.get("passed")),
         "agent": "AGENTX",
         "pipeline": PIPELINE,
         "result": result,
