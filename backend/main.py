@@ -20,7 +20,7 @@ import re
 app = FastAPI(
     title="AGENTX API",
     description="AI Execution OS backend",
-    version="0.8.1"
+    version="0.9.0"
 )
 
 
@@ -114,6 +114,148 @@ def add_task_record(task: str, result: Dict[str, Any]) -> Dict[str, Any]:
 
 
 # ============================================================
+# CONTEXT / TASK MEMORY
+# ============================================================
+
+FOLLOW_UP_PHRASES = [
+    "it",
+    "this",
+    "that",
+    "these",
+    "those",
+    "the above",
+    "previous",
+    "earlier",
+    "same",
+    "continue",
+    "go deeper",
+    "expand on",
+    "elaborate",
+    "based on that",
+    "using that",
+    "from that",
+]
+
+
+def _task_result_type(record: Dict[str, Any]) -> str | None:
+    """Recover the previous task type from a persisted task record."""
+    try:
+        result = record.get("result") or {}
+        delivered = result.get("result") or result
+        understanding = delivered.get("understanding") or {}
+        task_type = understanding.get("task_type")
+        return task_type if isinstance(task_type, str) else None
+    except AttributeError:
+        return None
+
+
+def _task_result_summary(record: Dict[str, Any]) -> Dict[str, Any]:
+    """Extract small, safe pieces of the previous result for context."""
+    result = record.get("result") or {}
+    delivered = result.get("result") or result
+    execution = delivered.get("execution") or {}
+
+    summary = {
+        "tool": execution.get("tool"),
+        "status": execution.get("status"),
+    }
+
+    if execution.get("tool") == "web_research":
+        summary["source_count"] = execution.get("source_count", 0)
+        summary["finding_count"] = len(execution.get("findings", []))
+    elif execution.get("tool") == "calculator":
+        summary["answer"] = execution.get("answer")
+    elif execution.get("tool") == "build_planner":
+        summary["component_count"] = len(execution.get("components", []))
+    elif execution.get("tool") == "analysis_engine":
+        summary["focus_areas"] = execution.get("focus_areas", [])
+
+    return summary
+
+
+def resolve_task_context(task: str) -> Dict[str, Any]:
+    """Resolve simple follow-up references against recent AGENTX history.
+
+    This is intentionally deterministic. AGENTX never invents a previous
+    task; it only uses an existing persisted task record.
+    """
+    cleaned = task.strip()
+    lower = cleaned.lower()
+
+    tasks = load_tasks()
+    candidates = [
+        item
+        for item in tasks
+        if isinstance(item, dict) and item.get("task")
+    ]
+    candidates.sort(
+        key=lambda item: item.get("created_at", ""),
+        reverse=True,
+    )
+
+    if not candidates:
+        return {
+            "used": False,
+            "resolved_task": cleaned,
+            "previous_task": None,
+            "previous_task_id": None,
+            "reason": None,
+            "inferred_task_type": None,
+            "previous_result": None,
+        }
+
+    previous = candidates[0]
+    previous_task = str(previous.get("task", "")).strip()
+
+    # Explicit follow-up language is the strongest signal.
+    explicit_reference = any(
+        re.search(rf"\b{re.escape(phrase)}\b", lower)
+        for phrase in FOLLOW_UP_PHRASES
+    )
+
+    # Short/vague requests are also treated as continuations.
+    vague_follow_up = lower in {
+        "continue",
+        "continue this",
+        "continue that",
+        "go ahead",
+        "do the same",
+        "do that",
+        "expand",
+        "elaborate",
+    }
+
+    if not explicit_reference and not vague_follow_up:
+        return {
+            "used": False,
+            "resolved_task": cleaned,
+            "previous_task": None,
+            "previous_task_id": None,
+            "reason": None,
+            "inferred_task_type": None,
+            "previous_result": None,
+        }
+
+    previous_type = _task_result_type(previous)
+    previous_summary = _task_result_summary(previous)
+
+    resolved_task = (
+        f"{cleaned} [Context: previous AGENTX task was "
+        f"'{previous_task}']"
+    )
+
+    return {
+        "used": True,
+        "resolved_task": resolved_task,
+        "previous_task": previous_task,
+        "previous_task_id": previous.get("id"),
+        "reason": "follow_up_reference",
+        "inferred_task_type": previous_type,
+        "previous_result": previous_summary,
+    }
+
+
+# ============================================================
 # AGENTX PIPELINE
 # ============================================================
 
@@ -154,14 +296,15 @@ REQUEST_TIMEOUT = 10
 # UNDERSTAND
 # ============================================================
 
-def understand_task(task: str) -> Dict[str, Any]:
-    """
-    Understand the user's objective and classify the task.
-    """
+def understand_task(
+    task: str,
+    context: Dict[str, Any] | None = None,
+) -> Dict[str, Any]:
+    """Understand the user's objective, classify it, and attach context."""
 
     cleaned_task = task.strip()
-
     task_lower = cleaned_task.lower()
+    context = context or resolve_task_context(cleaned_task)
 
     # --------------------------------------------------------
     # Analysis detection
@@ -253,6 +396,11 @@ def understand_task(task: str) -> Dict[str, Any]:
     ):
         task_type = "calculation"
 
+    elif context.get("used") and context.get("inferred_task_type"):
+        # If the follow-up contains no new task verb, inherit the previous
+        # task type rather than falling back to a generic task.
+        task_type = context["inferred_task_type"]
+
     else:
         task_type = "general"
 
@@ -264,14 +412,25 @@ def understand_task(task: str) -> Dict[str, Any]:
         "general": "Understand and structure the requested task",
     }
 
+    context_message = None
+    if context.get("used"):
+        context_message = (
+            f"Linked to previous task: {context.get('previous_task')}"
+        )
+
     return {
         "status": "completed",
         "objective": cleaned_task,
+        "resolved_objective": context.get("resolved_task", cleaned_task),
         "task_type": task_type,
         "intent": intent_map.get(task_type, intent_map["general"]),
+        "context_used": bool(context.get("used")),
+        "context": context,
         "summary": (
             f"AGENTX identified the objective: {cleaned_task}"
-        )
+            + (f" using previous task context." if context.get("used") else "")
+        ),
+        "context_message": context_message,
     }
 
 
@@ -1277,12 +1436,14 @@ def create_build_plan(task: str) -> Dict[str, Any]:
 # ANALYSIS ENGINE
 # ============================================================
 
-def analyze_task(task: str) -> Dict[str, Any]:
-    """
-    Produce a structured analysis framework without inventing data.
-    """
+def analyze_task(
+    task: str,
+    context: Dict[str, Any] | None = None,
+) -> Dict[str, Any]:
+    """Produce a structured analysis framework without inventing data."""
 
     task_lower = task.lower()
+    context = context or {}
 
     focus = []
 
@@ -1320,11 +1481,28 @@ def analyze_task(task: str) -> Dict[str, Any]:
 
     focus = list(dict.fromkeys(focus))
 
+    context_evidence = None
+    if context.get("used"):
+        context_evidence = {
+            "previous_task": context.get("previous_task"),
+            "previous_task_id": context.get("previous_task_id"),
+            "previous_result": context.get("previous_result"),
+        }
+
+    evidence_status = (
+        "Using the previous AGENTX task as contextual evidence; "
+        "no new external dataset was supplied."
+        if context.get("used")
+        else "No external dataset was supplied to this request."
+    )
+
     return {
         "status": "completed",
         "tool": "analysis_engine",
         "task": task,
         "objective": f"Analyze: {task}",
+        "context_used": bool(context.get("used")),
+        "context_evidence": context_evidence,
         "dimensions": [
             "Objective and scope",
             "Inputs/evidence required",
@@ -1333,7 +1511,7 @@ def analyze_task(task: str) -> Dict[str, Any]:
             "Actionable recommendations",
         ],
         "focus_areas": focus,
-        "evidence_status": "No external dataset was supplied to this request.",
+        "evidence_status": evidence_status,
         "limitations": [
             "No numerical conclusions are fabricated without supporting data.",
             "Actual dataset analysis can be performed when a file/data tool is connected.",
@@ -1382,15 +1560,17 @@ def reason_general_task(task: str) -> Dict[str, Any]:
 # ============================================================
 
 def execute_task(
-
     task: str,
-    task_type: str
+    task_type: str,
+    context: Dict[str, Any] | None = None,
 ) -> Dict[str, Any]:
     """
     Route the task to the appropriate AGENTX tool.
     """
 
     selected_tool = select_tool(task_type)
+    context = context or {}
+    execution_task = context.get("resolved_task", task)
 
     print(
         f"[AGENTX] Selected tool: {selected_tool}"
@@ -1402,7 +1582,7 @@ def execute_task(
 
     if task_type == "research":
 
-        result = perform_research(task)
+        result = perform_research(execution_task)
         result["tool"] = selected_tool
 
         return result
@@ -1413,7 +1593,7 @@ def execute_task(
 
     if task_type == "calculation":
 
-        expression = extract_calculation_expression(task)
+        expression = extract_calculation_expression(execution_task)
 
         result = calculate_expression(expression)
         result["tool"] = selected_tool
@@ -1425,20 +1605,20 @@ def execute_task(
     # --------------------------------------------------------
 
     if task_type == "build":
-        return create_build_plan(task)
+        return create_build_plan(execution_task)
 
     # --------------------------------------------------------
     # Analysis engine
     # --------------------------------------------------------
 
     if task_type == "analysis":
-        return analyze_task(task)
+        return analyze_task(execution_task, context)
 
     # --------------------------------------------------------
     # General reasoner
     # --------------------------------------------------------
 
-    return reason_general_task(task)
+    return reason_general_task(execution_task)
 
 
 # ============================================================
@@ -1619,7 +1799,7 @@ def root():
         "name": "AGENTX",
         "message": "AGENTX backend is running",
         "status": "online",
-        "version": "0.8.1"
+        "version": "0.9.0"
     }
 
 
@@ -1633,7 +1813,7 @@ def health():
     return {
         "status": "healthy",
         "service": "agentx-api",
-        "version": "0.8.1"
+        "version": "0.9.0"
     }
 
 
@@ -1698,10 +1878,22 @@ def create_task(
     )
 
     # --------------------------------------------------------
+    # CONTEXT
+    # --------------------------------------------------------
+
+    context = resolve_task_context(task)
+
+    if context.get("used"):
+        print(
+            "[AGENTX] Context linked to previous task: "
+            f"{context.get('previous_task')}"
+        )
+
+    # --------------------------------------------------------
     # 1. UNDERSTAND
     # --------------------------------------------------------
 
-    understanding = understand_task(task)
+    understanding = understand_task(task, context)
 
     task_type = understanding["task_type"]
 
@@ -1728,7 +1920,8 @@ def create_task(
 
     execution = execute_task(
         task,
-        task_type
+        task_type,
+        context,
     )
 
     print(
@@ -1773,6 +1966,12 @@ def create_task(
             "success": bool(verification.get("passed")),
             "agent": "AGENTX",
             "pipeline": PIPELINE,
+            "context": {
+                "used": bool(context.get("used")),
+                "previous_task": context.get("previous_task"),
+                "previous_task_id": context.get("previous_task_id"),
+                "reason": context.get("reason"),
+            },
             "result": result,
         },
     )
